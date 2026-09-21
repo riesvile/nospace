@@ -1,0 +1,8 @@
+nospace
+Copyright 2026 nospace contributors
+
+The ranked English vocabulary is derived from Wordninja by Derek Anderson.
+It contains the first 60,000 alphabetic entries selected on September 21, 2026.
+The vocabulary retains its MIT license, included in
+src/server/data/WORDNINJA-LICENSE (dist/server/data/WORDNINJA-LICENSE in packages).
+Source: https://github.com/keredson/wordninja
