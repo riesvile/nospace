@@ -1,6 +1,6 @@
 # nospace
 
-Type `helloworld`, get `hello world`. A TypeScript library that adds spaces as you type, with optional typo correction.
+Type `ilovecats`, get `I love cats`. A TypeScript library that adds spaces and corrects typos as you type.
 
 ```sh
 npm install git+ssh://git@github.com/riesvile/nospace.git
@@ -18,9 +18,9 @@ const session = attachNoSpace(document.querySelector('textarea')!, {
 });
 ```
 
-Those routes run on your server. Jev handles spacing, Luna handles spelling, and you supply the API keys. The demo lives separately.
+Those routes run on your server. Jev handles spacing, Luna handles spelling.
 
-Works with inputs and textareas; other editors can use the headless API. Built for English, still experimental. Requires Node 22.12+.
+Works with inputs and textareas - other editors can use the headless API. Built for English, still experimental. Requires Node 22.12+.
 
 [Setup and API details](docs/integration.md) · [How it works](docs/architecture.md)
 
