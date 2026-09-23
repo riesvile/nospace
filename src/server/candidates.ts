@@ -22,12 +22,23 @@ for (const [typo, intended] of Object.entries({ teh: 'the', adn: 'and', recieve:
   cost.set(typo, (cost.get(intended) ?? 10) + 3);
 }
 
-interface Path { parts: string[]; cost: number }
+interface Path { parts: string[]; cost: number; fallback: boolean }
+
+// Reserve room for dictionary/prefix paths separately from unknown tokens.
+// Otherwise a long unknown fragment can cost less than several ordinary words
+// and prune every fully spaced reading before Jev ever gets to compare them.
+function bestPaths(choices: Path[]): Path[] {
+  const ranked = choices.sort((a, b) => a.cost - b.cost);
+  return [
+    ...ranked.filter((path) => !path.fallback).slice(0, 8),
+    ...ranked.filter((path) => path.fallback).slice(0, 4)
+  ];
+}
 
 export function spacingCandidates(raw: string, allowPartial = true): string[] {
   if (!/^[a-z]+(?:['’][a-z]+)*$/i.test(raw) || raw.length > 64) return [raw];
   const paths: Path[][] = Array.from({ length: raw.length + 1 }, () => []);
-  paths[0] = [{ parts: [], cost: 0 }];
+  paths[0] = [{ parts: [], cost: 0, fallback: false }];
   for (let end = 1; end <= raw.length; end++) {
     const choices: Path[] = [];
     for (let start = Math.max(0, end - 24); start < end; start++) {
@@ -39,13 +50,14 @@ export function spacingCandidates(raw: string, allowPartial = true): string[] {
         value = cost.get(lower.slice(0, -2))! + 1;
       }
       if (end === raw.length && allowPartial && prefixes.has(lower)) value = Math.min(value ?? Infinity, prefixes.get(lower)!);
-      if (value === undefined) {
+      const fallback = value === undefined;
+      if (fallback) {
         if (part.length < 3) continue;
         value = 18 + part.length * 1.6;
       }
-      for (const path of paths[start]) choices.push({ parts: [...path.parts, part], cost: path.cost + value });
+      for (const path of paths[start]) choices.push({ parts: [...path.parts, part], cost: path.cost + value!, fallback: path.fallback || fallback });
     }
-    paths[end] = choices.sort((a, b) => a.cost - b.cost).slice(0, 8);
+    paths[end] = bestPaths(choices);
   }
   return [...new Set([raw, ...paths[raw.length].map((path) => path.parts.join(' '))])];
 }

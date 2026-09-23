@@ -26,6 +26,15 @@ try {
     for (const match of source.matchAll(/(?:from\s+|import\s*)['"](\.[^'"]+)['"]/g)) inspect(resolve(dirname(file), match[1]));
   }
   inspect(join(root, 'dist/index.js')); inspect(join(root, 'dist/dom.js'));
+  const portable = new Set();
+  function inspectPortable(file) {
+    if (portable.has(file)) return;
+    portable.add(file);
+    const source = readFileSync(file, 'utf8');
+    assert(!/from ['"]node:/.test(source), `Node-only dependency in portable server: ${file}`);
+    for (const match of source.matchAll(/(?:from\s+|import\s*)['"](\.[^'"]+)['"]/g)) inspectPortable(resolve(dirname(file), match[1]));
+  }
+  inspectPortable(join(root, 'dist/server/index.js'));
   execFileSync('tar', ['-xzf', join(temporary, pack.filename), '-C', temporary]);
   // Self-reference resolves the package export map from a clean extracted artifact.
   execFileSync(process.execPath, ['--input-type=module', '-e', `
@@ -35,10 +44,15 @@ try {
     const server = await import('@riesvile/nospace/server');
     assert.equal(typeof core.createNoSpace, 'function');
     assert.equal(typeof dom.attachNoSpace, 'function');
+    assert.equal(typeof core.typographyEdits, 'function');
+    const { UsageLimiter } = await import('@riesvile/nospace/server/node');
+    const limiter = new UsageLimiter(':memory:');
+    limiter.reserve('review', '192.0.2.1')();
+    limiter.close();
     const provider = server.createJevLunaProvider({typesafeKey:'package-test-key', fetch:async (_url, init) => {
       const body = JSON.parse(init.body);
       assert(Object.values(body.questions).some(q => q.type === 'choice' && Object.values(q.criteria).includes('hello world')));
-      return Response.json({answers:{}});
+      return Response.json({answers:Object.fromEntries(Object.entries(body.questions).map(([key,q])=>[key,{probabilities:Object.fromEntries(Object.keys(q.criteria).map((option,i)=>[option,Number(i===0)]))}]))});
     }});
     await provider.analyze({raw:'helloworld', contextBefore:'', contextAfter:'', words:[], boundaries:[], paused:false}, new AbortController().signal);
   `], { cwd: join(temporary, 'package'), stdio: 'pipe' });

@@ -9,7 +9,7 @@ Your input / editor
 Editor adapter                 @riesvile/nospace/dom (optional)
         ↕
 Editing engine                 @riesvile/nospace
-        ↕ analyze / correct
+        ↕ analyze / word, sentence, document review
 HTTP transport or custom provider
         ↕ application-authenticated requests
 Your application server
@@ -23,9 +23,10 @@ Jev / Luna
 
 | Entry | Responsibility | Excluded |
 | --- | --- | --- |
-| `@riesvile/nospace` | Document identities, selection mapping, history, request scheduling, provider contract, HTTP client | DOM, Svelte, styles, credentials, vocabulary |
-| `@riesvile/nospace/dom` | Native input/textarea events, IME, selection, cleanup, form reset | Layout, focus policy, typography, network configuration |
-| `@riesvile/nospace/server` | Candidate vocabulary, Jev/Luna adapters, validated Web request handlers | Environment loading, routing, account authentication, deployment |
+| `@riesvile/nospace` | Document identities, selection mapping, history, typography, review scheduling, provider contract, HTTP client | DOM, Svelte, styles, credentials, vocabulary |
+| `@riesvile/nospace/dom` | Native input/textarea events, IME, selection, cleanup, form reset | Layout, focus policy, network configuration |
+| `@riesvile/nospace/server` | Candidate vocabulary, Jev/Luna adapters, validated Web handlers, quota hook | Node-only modules, environment loading, routing, authentication, deployment |
+| `@riesvile/nospace/server/node` | Optional persistent SQLite request/concurrency limits | Client identity discovery, routing, application data |
 
 One package with explicit subpath exports keeps installation simple while keeping
 the vocabulary and provider code out of the browser import graph. The package
@@ -41,18 +42,34 @@ spaces separately. Requests capture the relevant IDs, editing epoch and request
 sequence. Appending text keeps compatible work alive; replacements, undo, reset
 and IME composition invalidate older work. Automatic spacing additionally obeys
 request order; a word correction must still match the original letters, IDs and
-word boundaries.
+word boundaries. Sentence and document repairs also capture a document revision: any intervening text change makes them stale. Batch repairs keep identities between changed excerpts and form one undo step.
 
 The adapter must apply a change synchronously so its next `getState()` returns the
 new text. The engine will refuse to write if the host text has changed without a
 matching `input()`/`reset()`. Provider cancellation is best effort; every response
 is guarded even if a custom provider ignores its AbortSignal.
 
-This first release uses the library's undo history. A rich-text editor with its
+The library uses the library's undo history. A rich-text editor with its
 own history should use `WritingDocument` primitives to map changes into native
 transactions, or supply a dedicated integration. Do not rewrite `innerHTML` from
 a plain string: marks, embedded content, collaborative positions and history need
 editor-specific mappings.
+
+## Review and quota boundaries
+
+The engine schedules per-input analysis, paused sentence repair and sentence-completion
+full-text review. Optional provider methods keep custom spacing-only providers valid.
+Whole-draft review scans bounded sections, caches completed checks across 429 pauses,
+and shares a three-correction budget across sections and successful follow-up passes.
+It waits for fast corrections to settle and never applies a stale document snapshot.
+
+Spacing, corrections and full-text checks have independent retry deadlines. All Luna
+operations use the same host `correct` quota. Full-text Jev checks use `review`, so they
+cannot exhaust the keystroke `analyze` allowance. `reserve` runs after input validation
+and before a provider call; the optional Node limiter reserves atomically in SQLite.
+
+The browser/core and portable `/server` entry do not import the SQLite limiter. Package
+verification traverses both graphs and imports every export from an extracted tarball.
 
 ## Repository separation
 
@@ -75,5 +92,5 @@ Apache license and the vocabulary's MIT attribution.
 4. Publish versioned npm releases after selecting a stable public API. CI currently
    builds and tests; it does not publish packages or deploy a demo.
 
-The 0.1 API deliberately makes providers replaceable without claiming automatic
+The API deliberately makes providers replaceable without claiming automatic
 compatibility with every editor or every language.

@@ -154,3 +154,54 @@ describe('asynchronous writing', () => {
     expect(doc.text).toBe("Let's test this");
   });
 });
+
+describe('sentence repairs', () => {
+  it('reviews only after a pause and repairs a word boundary without moving the caret', () => {
+    const doc = new WritingDocument();
+    doc.edit('This is cool a shell');
+    expect(doc.snapshot(doc.text.length).sentence).toBeUndefined();
+    const sentence = doc.snapshot(doc.text.length, true).sentence!;
+    const caret = doc.anchor(doc.text.length);
+    expect(doc.correctSentence(sentence, 'This is cool as hell')).toBe(true);
+    expect(doc.text).toBe('This is cool as hell');
+    expect(doc.resolve(caret)).toBe(doc.text.length);
+    doc.undo();
+    expect(doc.text).toBe('This is cool a shell');
+  });
+
+  it.each(['append', 'manual fix', 'undo'])('discards a pending repair after %s', (change) => {
+    const doc = new WritingDocument();
+    doc.edit('This is cool a shell');
+    const sentence = doc.snapshot(doc.text.length, true).sentence!;
+    if (change === 'append') doc.edit(doc.text + ' collection');
+    if (change === 'manual fix') doc.edit('This is cool as hell');
+    if (change === 'undo') { doc.undo(); doc.redo(); }
+    const current = doc.text;
+    expect(doc.correctSentence(sentence, 'This is cool as hell')).toBe(false);
+    expect(doc.text).toBe(current);
+  });
+
+  it('preserves neighboring sentences and makes repaired spaces explicit', () => {
+    const doc = new WritingDocument();
+    doc.edit('Hello there. This is coolashell. Goodbye.');
+    const { snapshot, results } = boundary(doc, 'Hello there. This is coola');
+    doc.applySpacing(snapshot, results);
+    const caret = doc.text.indexOf('. Goodbye.');
+    const sentence = doc.snapshot(caret, true).sentence!;
+    expect(sentence.text).toBe('This is coola shell.');
+    expect(doc.correctSentence(sentence, 'This is cool as hell.')).toBe(true);
+    expect(doc.text).toBe('Hello there. This is cool as hell. Goodbye.');
+    const next = doc.snapshot(doc.text.indexOf('. Goodbye.'));
+    doc.applySpacing(next, next.input.boundaries.map((b) => ({ id: b.id, probability: 0 })));
+    expect(doc.text).toBe('Hello there. This is cool as hell. Goodbye.');
+  });
+
+  it('bounds a long sentence at a word boundary', () => {
+    const doc = new WritingDocument();
+    doc.edit('This phrase goes on '.repeat(30) + 'with cool a shell');
+    const sentence = doc.snapshot(doc.text.length, true).sentence!;
+    expect(sentence.text.length).toBeLessThanOrEqual(160);
+    expect(sentence.text.endsWith('with cool a shell')).toBe(true);
+    expect(sentence.before.length).toBeLessThanOrEqual(80);
+  });
+});

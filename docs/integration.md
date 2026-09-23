@@ -6,7 +6,7 @@ keeping control of its appearance, state and backend.
 **Experimental, English prose.** The core preserves character identities, manual
 spaces, selections, composition and undo while asynchronous spacing decisions
 arrive. An optional server provider uses Jev to choose spacing and flag likely
-typos, and Luna to correct a single word. You can supply your own provider.
+typos, and GPT-6 Luna to make small word, sentence and full-text repairs. Smart punctuation runs locally. You can supply your own provider.
 
 This repository contains the library, tests and integration documentation. The
 demo website, styles, fonts, analytics and deployment configuration live separately.
@@ -16,7 +16,7 @@ are built into `dist/`.
 ## Install from GitHub
 
 Requires Node.js 22.12+ for development and the example backend, and a modern browser
-for the DOM adapter. This first version has **not been published to npm**.
+for the DOM adapter. The package has **not been published to npm**. The optional SQLite limiter requires Node.js 22.13+; the portable server adapter does not import Node-only modules.
 
 ```sh
 npm install git+ssh://git@github.com/riesvile/nospace.git
@@ -78,7 +78,7 @@ const provider = createJevLunaProvider({
   typesafeKey: process.env.TYPESAFE_API_KEY,
   openaiKey: process.env.OPENAI_API_KEY,
   jevModel: 'jev-latest',
-  openaiModel: 'gpt-5.6-luna',
+  openaiModel: 'gpt-6-luna',
 });
 
 const handlers = createRequestHandlers(provider);
@@ -103,17 +103,78 @@ also rejects creation in a browser. Treat the import boundary as an aid; your ho
 application is responsible for keeping its configuration on the server.
 
 Handlers validate bounded JSON bodies (24 KB), check origin, reject malformed
-requests, propagate cancellation, and return `Cache-Control: no-store`. **Mount
-them behind your application's authentication and rate limits** before exposing
-a paid provider. Origin checks are not authentication. If the frontend uses a
+requests, propagate cancellation, and return `Cache-Control: no-store`. Both routes also accept the new review modes: the analysis route handles full-text Jev checks, and the correction route handles word, sentence and document repairs. **Mount them behind your application's authentication and rate limits** before exposing a paid provider. Origin checks are not authentication. If the frontend uses a
 different origin, pass `{ allowedOrigins: ['https://your-frontend.example'] }` and
 handle CORS/preflight in your application. The browser transport supports custom
 application headers, credentials and a custom `fetch` function.
 
 For spacing without spelling correction, omit `openaiKey` on the server and
-`correctUrl` in the browser. The host can also call `provider.analyze()` and
+`correctUrl` in the browser. The editor only schedules sentence/full-text corrections when the provider implements the relevant optional methods. The host can also call `provider.analyze()` and
 `provider.correct()` directly from its own server routes instead of using the
 provided HTTP handlers.
+
+## Optional persistent limits
+
+`createRequestHandlers` accepts a `reserve(operation, request)` hook. It runs only
+after validation and before the paid call. Return a release callback for a concurrency
+lease; failed/aborted provider calls still consume their reserved usage. Throw the
+exported `RateLimitError(seconds)` for HTTP 429 with `Retry-After`. Other reservation
+errors fail closed without contacting a provider. You can use this hook with your
+existing quota system, including a shared store for multiple application instances.
+
+For a Node server with persistent disk, the demo's SQLite implementation is available
+through a separate import. This SvelteKit example gets the client address from the
+server framework; apply equivalent trusted connection handling in other frameworks:
+
+```ts
+import { createRequestHandlers } from '@riesvile/nospace/server';
+import { UsageLimiter } from '@riesvile/nospace/server/node';
+
+// Create once, outside the request handler. Keep this file outside release folders.
+const limiter = new UsageLimiter('/var/lib/my-app/nospace-limits.sqlite');
+
+// The analyze route. Use .correct(request) in the matching correction route.
+export async function POST({ request, getClientAddress }) {
+  const handlers = createRequestHandlers(provider, {
+    reserve: (operation) => limiter.reserve(operation, getClientAddress()),
+  });
+  return handlers.analyze(request);
+}
+// Close the limiter on graceful application shutdown: limiter.close().
+```
+
+Share the limiter/database between both routes. Never trust an arbitrary forwarded-IP
+header: your reverse proxy/framework must overwrite and validate it. IPv4 addresses
+share one allowance; IPv6 addresses share a /64. People behind the same NAT share a
+limit. SQLite is suitable for processes sharing a local persistent file; a multi-host
+or ephemeral/serverless deployment should use a shared quota service through `reserve`.
+No limiter is enabled automatically, since the library cannot infer your trusted
+client identity or persistence location.
+
+| Operation | Per IP/minute | Per IP/hour | Per IP/day | Concurrent per IP |
+| --- | ---: | ---: | ---: | ---: |
+| Spacing | 1,500 | 20,000 | 50,000 | 12 |
+| All Luna corrections | 30 | 150 | 500 | 3 |
+| Full-text Jev sections | 30 | 150 | 500 | 1 |
+
+Site-wide limits leave headroom for 100 ordinary visitors; exported `USAGE_LIMITS`
+and the `Policies` constructor argument expose the defaults and allow overrides.
+The limits count requests, not exact tokens or money. Word/sentence output is capped
+at 120 tokens, and full-text repair batches at 480. Counters survive restarts and
+releases. Use both host request limits and provider billing controls as appropriate.
+
+## Upgrading from 0.1
+
+Update both browser and server packages to 0.2. The same two URLs support all modes;
+no additional route is needed. The `analyze`/`correct` custom-provider methods and
+`WritingDocument(initialText)` constructor remain supported. The three new review
+methods are optional; providers implementing only the old contract remain supported.
+
+Typography and reviews are enabled by default when supported. To retain the old
+behavior while updating a backend separately, set `typography: false`,
+`sentenceReview: false` and `documentReview: false` on the editor session. Update
+exhaustive switches over change reasons or error operations for the new values.
+The default correction model is now `gpt-6-luna`; `openaiModel` remains configurable.
 
 ## Custom editors and providers
 
@@ -142,8 +203,16 @@ const session = createNoSpace({
       return { boundaries: [], typos: [], durationMs: 0 };
     },
     // Optional: async correct({ word, before, after }, signal) { return null; }
+    // Optional: async correctSentence({ text, before, after }, signal) { return null; }
+    // Optional: async reviewDocument({ text, before, after }, signal) {
+    //   return { decision: 'ok', probability: 0.05 }; // probability of needs_update
+    // }
+    // Optional: async correctDocument({ text, before, after }, signal) { return []; }
   },
-  capitalize: true,  // default; set false to preserve casing
+  capitalize: true,  // local sentence capitalization
+  typography: true,  // curly apostrophes/quotes and ellipses; false for literal inputs
+  sentenceReview: true, // needs provider.correctSentence
+  documentReview: true, // needs provider.reviewDocument + correctDocument
   idleDelayMs: 700,  // last-word check after a pause
 });
 
@@ -161,7 +230,7 @@ apps must map their document positions and transactions to this contract. A
 generic rich-text adapter is not included: flattening arbitrary HTML and writing
 it back would lose structure and editor history. See [architecture](architecture.md)
 for the intended adapter boundary and next steps. For lower-level integration,
-`WritingDocument`, `Snapshot` and `Bookmark` are exported separately.
+`WritingDocument`, `Snapshot`, `Bookmark`, `SentenceBookmark`, `DocumentBookmark` and `typographyEdits` are exported separately.
 
 `session.flush()` starts a paused analysis immediately and resolves after that
 analysis, not after dependent correction requests/follow-ups. `reset()` cancels
@@ -178,25 +247,51 @@ is idempotent and prevents later callbacks.
   space blocks that boundary until the underlying text is replaced.
 - The rolling window is at most 64 raw characters, plus bounded surrounding
   context and up to six word candidates. Large pastes are analyzed near the caret,
-  rather than rewritten in full. This is designed for short prose input; the
+  with sentence-completion review covering the whole draft in bounded sections. This is designed for short prose input; the
   current document/history implementation is not optimized for very large files.
 - A ranked English vocabulary proposes segmentations. Jev chooses among them;
-  the dictionary alone never inserts spaces. A boundary is inserted at probability
+  the dictionary alone never inserts spaces. Dictionary/prefix candidates have reserved search capacity so unknown fragments cannot crowd every natural phrase out. Paused choices include the visible reading in its sentence context. A boundary is inserted at probability
   ≥0.65 and removed at ≤0.25; intermediate evidence retains the existing choice.
-- Typo probability ≥0.85 or missing-apostrophe probability ≥0.8 can trigger Luna.
-  Luna returns one corrected word or `null`. The built-in server rejects rewrites,
-  multiword output and changes beyond a small spelling edit distance.
+- A completed word is referred to Luna at typo probability ≥0.65. The final word
+  keeps ≥0.85; missing-apostrophe checks use ≥0.8. Jev sees the already-spaced
+  spelling context. Word corrections remain a single word or `null`.
+- A paused sentence with plausibility ≤0.2 can request a minimal repair. The same
+  route also resolves competing spacing alternatives when Jev rejects the visible
+  reading with high confidence. Phrases are capped at 160 characters and 80 characters
+  of context on each side. Moving spaces is allowed; letter edits stay within two.
+- A new `.`, `!`, `?`, ellipsis or newline queues a whole-draft check after at least
+  900ms of quiet and after fast fixes settle. Sections contain at most 1,200 characters,
+  with 160 characters of context. Only a `needs_update` probability ≥0.8 sends a
+  section to Luna. Each response may contain up to six small non-overlapping edits.
+  Repaired text is rechecked, with at most three document correction requests shared
+  across all sections and follow-up passes per sentence completion. One accepted
+  batch is one undo step. Rate-limit pauses resume already-reviewed sections.
+- Sentence/document repairs preserve wording, informal language, punctuation and
+  numbers; ambiguous repairs and broad rewrites are rejected. New typing invalidates
+  pending sentence/document snapshots, even when it only appends text.
+- Local typography formats apostrophes (`What’s`), paired quotes (`“hello”`) and
+  ellipses (`…`). URLs, email addresses, backtick-delimited code and numeric
+  measurements keep literal punctuation. It shares the triggering edit's undo step
+  and adds no model call. Use `typography: false` for literal input fields.
 - Sentence capitalization is local and optional. Other scripts are preserved but
   currently have no spacing dictionary. Ambiguous words and names can be wrong;
   every automatic edit can be undone.
-- A provider failure leaves the input usable and is surfaced through `onError`.
-  Transient analysis failures get a bounded retry; rate-limit responses back off.
+- A provider failure leaves the input usable and is surfaced through `onError` with
+  operation `analyze`, `correct` or `review`. Transient analysis failures get a bounded
+  retry. Spacing, corrections and document review have independent backoff deadlines.
+  The HTTP transport honors `Retry-After` seconds or dates, even from an HTML proxy
+  response. Custom providers can throw an error with `status: 429` and `retryAfterMs`.
+- `onChange`/`setState` reasons now also include `typography`, `sentence-correction`
+  and `document-correction`. Existing `spacing`, `correction`, `capitalization`,
+  `undo` and `redo` values are retained.
 
 ## Data and licensing
 
-The default provider sends bounded text windows to TypeSafe and selected words
-plus context to OpenAI. OpenAI Responses requests use `store: false`. The library
-has no database, telemetry, analytics or persistence. A custom provider controls
+The default provider sends bounded text windows and, when enabled, whole-draft
+sections to TypeSafe. Selected words, phrases or flagged sections plus context go
+to OpenAI. OpenAI Responses requests use `store: false`. The core and portable server
+have no database, telemetry or analytics. The opt-in Node limiter stores counters
+and salted network identifiers, never text or provider keys. A custom provider controls
 its own data handling. Tests use mocks and need no keys or paid API calls.
 
 The project uses the existing [Apache-2.0 license](../LICENSE). The vocabulary is
@@ -204,5 +299,5 @@ derived from [Wordninja](https://github.com/keredson/wordninja), with its MIT li
 retained in [WORDNINJA-LICENSE](../src/server/data/WORDNINJA-LICENSE) and in packages.
 
 Provider references: [TypeSafe API](https://docs.typesafe.ai/api),
-[Luna model](https://developers.openai.com/api/docs/models/gpt-5.6-luna),
+[Luna model](https://developers.openai.com/api/docs/models/gpt-6-luna),
 [Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs).

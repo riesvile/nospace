@@ -18,7 +18,7 @@ const session = attachNoSpace(document.querySelector('textarea')!, {
 });
 ```
 
-Those routes run on your server. Jev handles spacing, Luna handles spelling.
+Those routes run on your server. Jev checks spacing and context; GPT-6 Luna handles targeted corrections. Includes smart punctuation, sentence and full-text review, and an optional persistent rate limiter.
 
 Works with inputs and textareas - other editors can use the headless API. Built for English, still experimental. Requires Node 22.12+.
 

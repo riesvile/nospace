@@ -23,6 +23,26 @@ describe('candidate generation', () => {
   });
 
   it.each([
+    ['youmaybuyapenatpenisland', 'you may buy a pen at pen island'],
+    ['wewillmeetatthegrandhotel', 'we will meet at the grand hotel'],
+    ['wevisitednewyorkcity', 'we visited new york city'],
+    ['ineedtorecovermyaccount', 'i need to recover my account'],
+    ['thisisanotebook', 'this is a notebook']
+  ])('keeps full phrase candidates alongside unknown names: %s', (raw, expected) => {
+    const candidates = spacingCandidates(raw);
+    expect(candidates).toContain(expected);
+    expect(candidates).toContain(raw);
+    expect(candidates.length).toBeLessThanOrEqual(13);
+    expect(candidates.every((candidate) => candidate.replaceAll(' ', '') === raw)).toBe(true);
+  });
+
+  it('always leaves unfamiliar names and compounds available intact', () => {
+    for (const word of ['postgresql', 'Frobnicator', 'notebook', 'therapist']) {
+      expect(spacingCandidates(word)).toContain(word);
+    }
+  });
+
+  it.each([
     ['Letstestthis', 'Lets test this'],
     ["Let'stestthis", "Let's test this"],
     ['Let’stestthis', 'Let’s test this'],

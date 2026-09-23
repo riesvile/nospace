@@ -1,7 +1,9 @@
 import type { NoSpaceProvider } from '../types.js';
-import { analyze, correct, type JevLunaOptions } from './providers.js';
+import { analyze, correct, correctSentence, reviewDocument, correctDocument, type JevLunaOptions } from './providers.js';
 
 export { ProviderError } from './providers.js';
+export { RateLimitError } from './limits.js';
+export type { ModelRoute } from './limits.js';
 export type { JevLunaOptions } from './providers.js';
 export { createRequestHandlers } from './http.js';
 export type { RequestHandlerOptions } from './http.js';
@@ -12,6 +14,11 @@ export function createJevLunaProvider(options: JevLunaOptions): NoSpaceProvider 
   const config = { ...options };
   return {
     analyze: (input, signal) => analyze(input, config, signal),
-    ...(config.openaiKey ? { correct: (input, signal) => correct(input, config, signal) } satisfies Pick<NoSpaceProvider, 'correct'> : {})
+    reviewDocument: (input, signal) => reviewDocument(input, config, signal),
+    ...(config.openaiKey ? {
+      correct: (input, signal) => correct(input, config, signal),
+      correctSentence: (input, signal) => correctSentence(input, config, signal),
+      correctDocument: (input, signal) => correctDocument(input, config, signal)
+    } satisfies Pick<NoSpaceProvider, 'correct' | 'correctSentence' | 'correctDocument'> : {})
   };
 }
